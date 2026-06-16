@@ -1,0 +1,30 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# ---- 环境变量 / 密钥 ----
+.env
+*.local
+
+# ---- 向量库（由 ingest.py 生成，不入库）----
+chroma_db/
+
+# ---- Node / Next.js ----
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- Obsidian 工作区配置（保留资料，忽略个人配置）----
+knowledge_base/.obsidian/
