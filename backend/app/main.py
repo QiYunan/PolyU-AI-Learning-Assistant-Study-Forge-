@@ -29,7 +29,8 @@ class Source(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    answer: str
+    answer_en: str
+    answer_zh: str
     sources: list[Source]
     demo_mode: bool
 
@@ -45,17 +46,28 @@ def health():
     }
 
 
+def _split_bilingual(raw: str) -> tuple[str, str]:
+    """Split LLM output into (english, chinese) using ===ZH=== separator."""
+    sep = "===ZH==="
+    if sep in raw:
+        parts = raw.split(sep, 1)
+        return parts[0].strip(), parts[1].strip()
+    return raw.strip(), ""
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     contexts = rag.retrieve(req.question)
     system_prompt, user_prompt = rag.build_prompts(req.question, contexts, req.mode)
-    answer = llm.generate(system_prompt, user_prompt)
+    raw_answer = llm.generate(system_prompt, user_prompt)
+    answer_en, answer_zh = _split_bilingual(raw_answer)
     sources = [
         Source(source=c["source"], heading=c["heading"], text=c["text"])
         for c in contexts
     ]
     return ChatResponse(
-        answer=answer,
+        answer_en=answer_en,
+        answer_zh=answer_zh if answer_zh else answer_en,
         sources=sources,
         demo_mode=not bool(settings.deepseek_api_key),
     )

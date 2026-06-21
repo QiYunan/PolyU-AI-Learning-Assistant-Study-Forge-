@@ -1,10 +1,7 @@
-"""RAG 核心：从 Chroma 检索相关课程资料，并拼装给 LLM 的提示词。
-
-向量化用 Chroma 内置的默认 embedding（轻量，基于 onnxruntime，自动下载小模型），
-MVP 阶段够用。后续可换成多语言模型（如 bge-m3 / multilingual-e5）提升中文检索效果。
-"""
+"""RAG 核心：从 Chroma 检索相关课程资料，并拼装给 LLM 的提示词。"""
 from .config import settings  # 必须先导入：会在此重定向缓存目录到项目盘
 import chromadb
+from .embeddings import embedding_fn
 
 _collection = None
 
@@ -13,7 +10,10 @@ def get_collection():
     global _collection
     if _collection is None:
         client = chromadb.PersistentClient(path=settings.chroma_dir)
-        _collection = client.get_or_create_collection(name=settings.collection_name)
+        _collection = client.get_or_create_collection(
+            name=settings.collection_name,
+            embedding_function=embedding_fn,
+        )
     return _collection
 
 
@@ -55,13 +55,19 @@ def build_prompts(question: str, contexts: list[dict], mode: str = "guide") -> t
     guidance = _DIRECT_INSTRUCTION if mode == "direct" else _GUIDE_INSTRUCTION
 
     system_prompt = (
-        "你是港理工（PolyU）应用物理系学生的课程学习助手。遵守以下规则：\n"
-        "1. 只能依据下面提供的【课程资料】来回答。资料里没有的内容，要如实说"
-        "\"提供的资料里没有提到\"，绝不能编造（学生最反感 AI 瞎编）。\n"
-        "2. 所有数学公式都用 LaTeX 书写：行内用 $...$，独立成行用 $$...$$。\n"
-        "3. 回答要简洁、贴合课程，不说废话。\n"
-        "4. 用学生提问所使用的语言回答（中文问就用中文答）。\n"
-        f"5. {guidance}"
+        "You are a course learning assistant for PolyU Applied Physics students. Follow these rules:\n"
+        "1. Prioritize the provided [Course Materials] below. When citing them, mark with [Course Materials]. "
+        "If the materials are insufficient, you may supplement with your own physics knowledge, "
+        "but you MUST mark those parts with [AI General Knowledge] so students know the source. "
+        "Never fabricate uncertain content.\n"
+        "2. Write all math formulas in LaTeX: inline $...$ and display $$...$$.\n"
+        "3. Be concise and course-relevant.\n"
+        f"4. {guidance}\n"
+        "5. You MUST provide TWO versions of your answer: English first, then Chinese.\n"
+        "Output the English version first. Then output the separator ===ZH=== on its own line. "
+        "Then output the Chinese translation. Both versions must have identical content. "
+        "In the Chinese version, keep key technical terms in English in parentheses, "
+        "e.g. 薛定谔方程 (Schrödinger equation)."
     )
 
     if contexts:

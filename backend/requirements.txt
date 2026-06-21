@@ -4,3 +4,4 @@ chromadb
 openai
 python-dotenv
 pydantic-settings
+sentence-transformers

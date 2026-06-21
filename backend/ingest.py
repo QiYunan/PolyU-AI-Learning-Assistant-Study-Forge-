@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from app.config import settings  # noqa: E402  必须先导入：会重定向缓存目录到项目盘
 import chromadb  # noqa: E402
+from app.embeddings import embedding_fn  # noqa: E402
 
 CHUNK_SIZE = 700      # 每个片段目标字符数
 CHUNK_OVERLAP = 120   # 片段间重叠字符数，避免在句子中间被切断丢失上下文
@@ -67,7 +68,7 @@ def build_chunks() -> tuple[list[str], list[dict], list[str]]:
 def main():
     documents, metadatas, ids = build_chunks()
     if not documents:
-        print(f"⚠️ 在 {settings.kb_dir} 下没找到可导入的 .md 资料。")
+        print(f"[WARN] No .md files found in {settings.kb_dir}.")
         return
 
     client = chromadb.PersistentClient(path=settings.chroma_dir)
@@ -76,11 +77,14 @@ def main():
         client.delete_collection(settings.collection_name)
     except Exception:
         pass
-    col = client.get_or_create_collection(name=settings.collection_name)
+    col = client.get_or_create_collection(
+        name=settings.collection_name,
+        embedding_function=embedding_fn,
+    )
 
     col.add(documents=documents, metadatas=metadatas, ids=ids)
-    print(f"✅ 已导入 {len(documents)} 个片段到集合 '{settings.collection_name}'。")
-    print(f"   向量库位置：{settings.chroma_dir}")
+    print(f"[OK] Imported {len(documents)} chunks into collection '{settings.collection_name}'.")
+    print(f"     Vector DB: {settings.chroma_dir}")
 
 
 if __name__ == "__main__":
