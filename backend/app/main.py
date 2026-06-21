@@ -1,6 +1,9 @@
 """FastAPI 入口：把检索 + LLM 串成一个 /chat 接口供前端调用。"""
+import json
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from . import llm, rag
@@ -70,4 +73,37 @@ def chat(req: ChatRequest):
         answer_zh=answer_zh if answer_zh else answer_en,
         sources=sources,
         demo_mode=not bool(settings.deepseek_api_key),
+    )
+
+
+@app.post("/chat/stream")
+def chat_stream(req: ChatRequest):
+    contexts = rag.retrieve(req.question)
+    system_prompt, user_prompt = rag.build_prompts(req.question, contexts, req.mode)
+    sources = [
+        {"source": c["source"], "heading": c["heading"], "text": c["text"]}
+        for c in contexts
+    ]
+    demo_mode = not bool(settings.deepseek_api_key)
+
+    def event_generator():
+        meta = json.dumps({"sources": sources, "demo_mode": demo_mode})
+        yield f"event: meta\ndata: {meta}\n\n"
+
+        full_text = ""
+        for chunk in llm.generate_stream(system_prompt, user_prompt):
+            full_text += chunk
+            yield f"event: token\ndata: {json.dumps({'text': chunk})}\n\n"
+
+        answer_en, answer_zh = _split_bilingual(full_text)
+        done = json.dumps({
+            "answer_en": answer_en,
+            "answer_zh": answer_zh if answer_zh else answer_en,
+        })
+        yield f"event: done\ndata: {done}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
