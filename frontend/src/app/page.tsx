@@ -24,6 +24,7 @@ type Message = {
   content_zh?: string;
   sources?: Source[];
   demo?: boolean;
+  streaming?: boolean;
 };
 
 type Conversation = {
@@ -145,7 +146,6 @@ export default function Home() {
 
     const userMsg: Message = { role: "user", content: question };
 
-    // Set title from first message
     updateConversation(convId, (c) => ({
       ...c,
       title: c.messages.length === 0 ? question.slice(0, 40) : c.title,
@@ -156,38 +156,98 @@ export default function Home() {
     setInput("");
     setLoading(true);
 
+    // Add a placeholder assistant message for streaming
+    const placeholderMsg: Message = { role: "assistant", content: "", streaming: true };
+    updateConversation(convId, (c) => ({
+      ...c,
+      messages: [...c.messages, placeholderMsg],
+      updatedAt: Date.now(),
+    }));
+
     try {
-      const res = await fetch(`${API_BASE}/chat`, {
+      const res = await fetch(`${API_BASE}/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question, mode }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
 
-      const assistantMsg: Message = {
-        role: "assistant",
-        content: data.answer_en,
-        content_en: data.answer_en,
-        content_zh: data.answer_zh,
-        sources: data.sources,
-        demo: data.demo_mode,
-      };
-      updateConversation(convId, (c) => ({
-        ...c,
-        messages: [...c.messages, assistantMsg],
-        updatedAt: Date.now(),
-      }));
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let rawText = "";
+      let sources: Source[] = [];
+      let demoMode = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from buffer
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+
+        for (const part of parts) {
+          const lines = part.split("\n");
+          let eventType = "";
+          let data = "";
+          for (const line of lines) {
+            if (line.startsWith("event: ")) eventType = line.slice(7);
+            else if (line.startsWith("data: ")) data = line.slice(6);
+          }
+          if (!data) continue;
+
+          if (eventType === "meta") {
+            const meta = JSON.parse(data);
+            sources = meta.sources;
+            demoMode = meta.demo_mode;
+          } else if (eventType === "token") {
+            const { text } = JSON.parse(data);
+            rawText += text;
+            // Show only the English part (before ===ZH===) during streaming
+            const sepIdx = rawText.indexOf("===ZH===");
+            const displayText = sepIdx >= 0 ? rawText.slice(0, sepIdx).trimEnd() : rawText;
+
+            updateConversation(convId!, (c) => {
+              const msgs = [...c.messages];
+              msgs[msgs.length - 1] = {
+                role: "assistant",
+                content: displayText,
+                sources,
+                demo: demoMode,
+                streaming: true,
+              };
+              return { ...c, messages: msgs, updatedAt: Date.now() };
+            });
+          } else if (eventType === "done") {
+            const { answer_en, answer_zh } = JSON.parse(data);
+            updateConversation(convId!, (c) => {
+              const msgs = [...c.messages];
+              msgs[msgs.length - 1] = {
+                role: "assistant",
+                content: answer_en,
+                content_en: answer_en,
+                content_zh: answer_zh,
+                sources,
+                demo: demoMode,
+                streaming: false,
+              };
+              return { ...c, messages: msgs, updatedAt: Date.now() };
+            });
+          }
+        }
+      }
     } catch (e) {
-      const errMsg: Message = {
-        role: "assistant",
-        content: "Cannot reach the backend. Make sure it is running (uvicorn on port 8000).\n\nError: " + String(e),
-      };
-      updateConversation(convId, (c) => ({
-        ...c,
-        messages: [...c.messages, errMsg],
-        updatedAt: Date.now(),
-      }));
+      updateConversation(convId!, (c) => {
+        const msgs = [...c.messages];
+        msgs[msgs.length - 1] = {
+          role: "assistant",
+          content: "Cannot reach the backend. Make sure it is running (uvicorn on port 8000).\n\nError: " + String(e),
+          streaming: false,
+        };
+        return { ...c, messages: msgs, updatedAt: Date.now() };
+      });
     } finally {
       setLoading(false);
     }
@@ -297,7 +357,7 @@ export default function Home() {
             {messages.map((m, i) => (
               <MessageBubble key={`${activeId}-${i}`} message={m} />
             ))}
-            {loading && (
+            {loading && messages.length === 0 && (
               <div className="text-neutral-400 text-sm px-2">Thinking...</div>
             )}
             <div ref={bottomRef} />
@@ -341,7 +401,8 @@ export default function Home() {
 function MessageBubble({ message }: { message: Message }) {
   const [showLang, setShowLang] = useState<AnswerLang>("en");
   const isUser = message.role === "user";
-  const hasBilingual = !isUser && message.content_en && message.content_zh;
+  const isStreaming = message.streaming;
+  const hasBilingual = !isUser && !isStreaming && message.content_en && message.content_zh;
 
   const displayContent = hasBilingual
     ? showLang === "zh"
@@ -397,6 +458,9 @@ function MessageBubble({ message }: { message: Message }) {
           >
             {displayContent}
           </ReactMarkdown>
+          {isStreaming && (
+            <span className="inline-block w-2 h-4 bg-neutral-400 animate-pulse ml-0.5 align-text-bottom" />
+          )}
         </div>
 
         {message.sources && message.sources.length > 0 && (

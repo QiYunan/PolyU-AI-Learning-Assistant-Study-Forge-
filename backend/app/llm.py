@@ -26,12 +26,7 @@ def generate(system_prompt: str, user_prompt: str) -> str:
     """调用 DeepSeek 生成回答。无 Key 时回退到演示模式。"""
     client = _get_client()
     if client is None:
-        return (
-            "⚠️ 当前为**演示模式**（尚未配置 DEEPSEEK_API_KEY）。\n\n"
-            "检索链路已打通，下面是根据你的问题从知识库检索到的相关资料。"
-            "配置 API Key 后，AI 将基于这些资料生成引导式回答。\n\n"
-            "---\n\n" + user_prompt
-        )
+        return _demo_fallback(user_prompt)
 
     resp = client.chat.completions.create(
         model=settings.deepseek_model,
@@ -43,3 +38,34 @@ def generate(system_prompt: str, user_prompt: str) -> str:
         stream=False,
     )
     return resp.choices[0].message.content or ""
+
+
+def generate_stream(system_prompt: str, user_prompt: str):
+    """Yield text chunks from DeepSeek. Falls back to demo mode if no key."""
+    client = _get_client()
+    if client is None:
+        yield _demo_fallback(user_prompt)
+        return
+
+    resp = client.chat.completions.create(
+        model=settings.deepseek_model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.3,
+        stream=True,
+    )
+    for chunk in resp:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
+
+
+def _demo_fallback(user_prompt: str) -> str:
+    return (
+        "**Demo mode** (no DEEPSEEK_API_KEY configured).\n\n"
+        "Retrieval pipeline is working. Below are the materials found for your question. "
+        "Configure the API key to get AI-generated answers.\n\n"
+        "---\n\n" + user_prompt
+    )
